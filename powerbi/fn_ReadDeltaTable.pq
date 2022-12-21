@@ -7,6 +7,9 @@ let
     let
 
         DeltaTableVersion = if DeltaTableOptions = null then null else Record.FieldOrDefault(DeltaTableOptions, "Version", null),
+        DeltaTableTimestampOffset = if DeltaTableOptions = null then null else Record.FieldOrDefault(DeltaTableOptions, "TimestampOffset", "+00:00"),
+        DeltaTableTimestampOffsetDuration = Duration.FromText(Text.TrimStart(DeltaTableTimestampOffset, "+")),
+        DeltaTableTimestamp = if DeltaTableOptions = null then null else DateTime.FromText(Record.FieldOrDefault(DeltaTableOptions, "Timestamp", null)) + #duration(0,Duration.Hours(DeltaTableTimestampOffsetDuration),Duration.Minutes(DeltaTableTimestampOffsetDuration),0),
         PartitionFilterFunction = if DeltaTableOptions = null then (x) => true else if Record.FieldOrDefault(DeltaTableOptions, "PartitionFilterFunction", null) = null then (x) => true else Record.Field(DeltaTableOptions, "PartitionFilterFunction"),
         StatsFilterFunction = if DeltaTableOptions = null then (x, y) => true else if Record.FieldOrDefault(DeltaTableOptions, "StatsFilterFunction", null) = null then (x, y) => true else Record.Field(DeltaTableOptions, "StatsFilterFunction"),
         UseFileBuffer = if DeltaTableOptions = null then false else if Record.FieldOrDefault(DeltaTableOptions, "UseFileBuffer", null) = null then false else Record.Field(DeltaTableOptions, "UseFileBuffer"),
@@ -112,10 +115,18 @@ let
             DeltaLogValidated = if Table.RowCount(#"Filtered Rows") = 0 then error "Mandatory folder " & Delimiter & "_delta_log" & Delimiter & " not found in the root of the file listing! Are you sure this is a Delta Lake table?" else #"Filtered Rows",
             #"Added Version" = Table.AddColumn(DeltaLogValidated, "Version", each try Int64.From(Text.BeforeDelimiter([File_Name], ".")) otherwise -1, Int64.Type),
             MaxVersion = Table.Group(#"Added Version", {}, {{"MaxVersion", each List.Max([Version]), type number}}){0}[MaxVersion],
+            MaxTimestamp = Table.Group(#"Added Version", {}, {{"MaxTimestamp", each List.Max([Date modified]), type datetime}}){0}[MaxTimestamp],
+            MinTimestamp = Table.Group(#"Added Version", {}, {{"MinTimestamp", each List.Min([Date modified]), type datetime}}){0}[MinTimestamp],
             #"Filtered RequestedVersion" = if DeltaTableVersion = null then #"Added Version" 
-        else if DeltaTableVersion < 0 then Table.SelectRows(#"Added Version", each [Version] <= MaxVersion + DeltaTableVersion)
-        else Table.SelectRows(#"Added Version", each [Version] <= DeltaTableVersion),
-            BufferedTable = Table.Buffer(#"Filtered RequestedVersion"),
+                else if DeltaTableVersion < 0 then Table.SelectRows(#"Added Version", each [Version] <= MaxVersion + DeltaTableVersion)
+                else Table.SelectRows(#"Added Version", each [Version] <= DeltaTableVersion),
+            #"Filtered RequestedTimestamp" = if DeltaTableTimestamp = null then #"Added Version" 
+                else if DeltaTableTimestamp > MaxTimestamp then #"Added Version"
+                else if DeltaTableTimestamp < MinTimestamp then Table.SelectRows(#"Added Version", each [Date modified] <= MinTimestamp)
+                else Table.SelectRows(#"Added Version", each [Date modified] <= DeltaTableTimestamp),
+            BufferedTable = if DeltaTableVersion <> null and DeltaTableTimestamp = null then Table.Buffer(#"Filtered RequestedVersion")
+                else if DeltaTableVersion = null and DeltaTableTimestamp <> null then Table.Buffer(#"Filtered RequestedTimestamp")
+                else Table.Buffer(#"Filtered RequestedVersion"),
             BufferedContent = Table.TransformColumns(BufferedTable,{{"Content", Binary.Buffer}})
         in
             BufferedContent,
