@@ -133,6 +133,27 @@ in
     DeltaTable
 ```
 
+You can also specify the `Timestamp` and `TimestampOffset` options as part of the second argument. The following examples read a Delta Lake table from an Azure Blob Storage as of the given timestamp.
+Without TimestampOffset (will be read as UTC):
+```m
+let
+    Source = AzureStorage.Blobs("https://connorstorage001.blob.core.windows.net/data"),
+    #"Filtered Rows" = Table.SelectRows(Source, each Text.StartsWith([Name], "deltatesting/delta/name/")),
+    DeltaTable = fn_ReadDeltaTable(#"Filtered Rows", [Timestamp="2022-12-07 06:00:00"])
+in
+    DeltaTable
+```
+With TimestampOffset (given timestamp is 12AM Central Time and is converted to UTC with the +06:00):
+```m
+let
+    Source = AzureStorage.Blobs("https://connorstorage001.blob.core.windows.net/data"),
+    #"Filtered Rows" = Table.SelectRows(Source, each Text.StartsWith([Name], "deltatesting/delta/name/")),
+    DeltaTable = fn_ReadDeltaTable(#"Filtered Rows", [Timestamp="2022-12-07 00:00:00", TimestampOffset="+06:00"])
+in
+    DeltaTable
+```
+
+
 ## Using Delta Lake Partition Elimination
 
 Partition Elimination is a crucial feature when working with large amounts of data. Without it, you would need to read the whole table and discard a majority of the rows afterwards which is not very efficient. This can be accomplished by using the `PartitionFilterFunction`-option as part of the second argument. In the example below our table is partitioned by `SalesTerritoryKey` (integer) and we only want to load data from Sales Territories where the `SalesTerritoryKey` is greater or equal to `5`:
